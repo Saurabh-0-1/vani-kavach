@@ -16,6 +16,7 @@ from app.detector import AudioAuthenticityDetector
 from app.main import app
 from app.preprocessor import (
     AudioValidationError,
+    MIN_RMS_THRESHOLD,
     TARGET_SAMPLE_RATE,
     preprocess_audio,
 )
@@ -28,10 +29,11 @@ def generate_test_wav(
     sample_rate: int = 16000,
     channels: int = 1,
     freq: float = 440.0,
+    amplitude: float = 0.5,
 ) -> bytes:
     """Helper to synthesize a clean sine wave WAV file in memory."""
     t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-    signal = 0.5 * np.sin(2 * np.pi * freq * t)
+    signal = amplitude * np.sin(2 * np.pi * freq * t)
 
     if channels == 2:
         # Interleave to create stereo
@@ -105,6 +107,47 @@ def test_short_audio_rejection():
     assert "shorter than minimum" in exc_info.value.message.lower()
 
 
+def test_completely_silent_wav_rejection():
+    """Test that zero-amplitude (completely silent) audio is rejected."""
+    silent_bytes = generate_test_wav(duration=1.0, sample_rate=16000, amplitude=0.0)
+    with pytest.raises(AudioValidationError) as exc_info:
+        preprocess_audio(silent_bytes, "silent.wav")
+    assert exc_info.value.status_code == 400
+    assert "completely silent" in exc_info.value.message.lower()
+
+
+def test_near_silent_wav_rejection():
+    """Test that effectively silent audio below RMS threshold is rejected."""
+    near_silent_bytes = generate_test_wav(duration=1.0, sample_rate=16000, amplitude=0.0001)
+    with pytest.raises(AudioValidationError) as exc_info:
+        preprocess_audio(near_silent_bytes, "near_silent.wav")
+    assert exc_info.value.status_code == 400
+    assert "effectively silent" in exc_info.value.message.lower()
+    assert "rms energy" in exc_info.value.message.lower()
+
+
+def test_low_volume_valid_audio_accepted():
+    """Test that ordinary low-volume speech-level audio passes without being falsely rejected."""
+    # amplitude 0.02 has RMS ~0.014, safely above MIN_RMS_THRESHOLD (0.001)
+    low_vol_bytes = generate_test_wav(duration=1.0, sample_rate=16000, amplitude=0.02)
+    result = preprocess_audio(low_vol_bytes, "quiet_speech.wav")
+    assert result.sample_rate == TARGET_SAMPLE_RATE
+    assert result.metadata.peak_amplitude == 1.0
+    assert result.metadata.rms_energy > 0.0
+    assert np.all(np.isfinite(result.signal))
+
+
+def test_non_finite_audio_rejection():
+    """Test that audio containing non-finite values (NaN/Inf) is safely rejected."""
+    nan_signal = np.array([np.nan] * 16000, dtype=np.float32)
+    buffer = io.BytesIO()
+    sf.write(buffer, nan_signal, 16000, format="WAV", subtype="FLOAT")
+    with pytest.raises(AudioValidationError) as exc_info:
+        preprocess_audio(buffer.getvalue(), "nan_audio.wav")
+    assert exc_info.value.status_code == 400
+    assert "non-finite" in exc_info.value.message.lower()
+
+
 # ---------------------------------------------------------------------------
 # Unit Tests: Model Contract & Ethical Invariant
 # ---------------------------------------------------------------------------
@@ -161,6 +204,36 @@ def test_api_validate_corrupt_file():
     response = client.post("/api/v1/audio/validate", files=files)
     assert response.status_code == 400
     assert "detail" in response.json()
+
+
+def test_api_validate_silent_file():
+    """Test POST /api/v1/audio/validate with completely silent audio returns HTTP 400."""
+    silent_bytes = generate_test_wav(duration=1.0, sample_rate=16000, amplitude=0.0)
+    files = {"file": ("silent.wav", io.BytesIO(silent_bytes), "audio/wav")}
+
+    response = client.post("/api/v1/audio/validate", files=files)
+    assert response.status_code == 400
+    assert "silent" in response.json()["detail"].lower()
+
+
+def test_api_validate_near_silent_file():
+    """Test POST /api/v1/audio/validate with near-silent audio returns HTTP 400."""
+    near_silent_bytes = generate_test_wav(duration=1.0, sample_rate=16000, amplitude=0.0001)
+    files = {"file": ("near_silent.wav", io.BytesIO(near_silent_bytes), "audio/wav")}
+
+    response = client.post("/api/v1/audio/validate", files=files)
+    assert response.status_code == 400
+    assert "effectively silent" in response.json()["detail"].lower()
+
+
+def test_api_analyze_silent_file():
+    """Test POST /api/v1/analyze with silent audio returns HTTP 400."""
+    silent_bytes = generate_test_wav(duration=1.0, sample_rate=16000, amplitude=0.0)
+    files = {"file": ("silent.wav", io.BytesIO(silent_bytes), "audio/wav")}
+
+    response = client.post("/api/v1/analyze", files=files)
+    assert response.status_code == 400
+    assert "silent" in response.json()["detail"].lower()
 
 
 def test_api_analyze_untrained_status():

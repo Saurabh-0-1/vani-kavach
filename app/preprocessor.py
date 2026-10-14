@@ -32,6 +32,8 @@ MIN_DURATION_SECONDS: float = 0.5  # Need at least 0.5s for meaningful acoustic 
 MAX_DURATION_SECONDS: float = 120.0  # Cap at 2 minutes for baseline processing
 MAX_FILE_SIZE_BYTES: int = 15 * 1024 * 1024  # 15 MB max file upload limit
 SUPPORTED_EXTENSIONS: set[str] = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+MIN_RMS_THRESHOLD: float = 0.001  # -60 dBFS: Minimum acoustic energy to distinguish speech/audio from silence
+MIN_RMS_ENERGY: float = MIN_RMS_THRESHOLD
 
 
 @dataclass
@@ -95,11 +97,13 @@ def preprocess_audio(content: bytes, filename: str) -> PreprocessedAudio:
     Steps:
     1. Size and extension checks.
     2. Soundfile decoding (handles WAV, FLAC, OGG, and supported MP3 containers).
-    3. Duration boundary checks [0.5s - 120s].
-    4. Stereo/multichannel to mono mixdown.
-    5. Resampling to 16 kHz.
-    6. Peak amplitude normalization to [-1.0, 1.0].
-    7. Acoustic metadata extraction (duration, peak, RMS energy).
+    3. Structural & numerical integrity checks (zero samples, non-finite values).
+    4. Duration boundary checks [0.5s - 120s].
+    5. Stereo/multichannel to mono mixdown.
+    6. Resampling to 16 kHz.
+    7. Silent-audio and energy floor validation (before peak normalization).
+    8. Peak amplitude normalization to [-1.0, 1.0].
+    9. Acoustic metadata extraction (duration, peak, RMS energy).
     """
     validate_file_envelope(content, filename)
 
@@ -114,6 +118,12 @@ def preprocess_audio(content: bytes, filename: str) -> PreprocessedAudio:
     if data.size == 0:
         raise AudioValidationError("Decoded audio stream contains zero samples.", status_code=400)
 
+    if not np.all(np.isfinite(data)):
+        raise AudioValidationError(
+            "Audio contains non-finite or invalid numeric values (NaN or Inf).",
+            status_code=400,
+        )
+
     # Determine original channels and mix down to mono
     if data.ndim == 1:
         orig_channels = 1
@@ -126,6 +136,9 @@ def preprocess_audio(content: bytes, filename: str) -> PreprocessedAudio:
             f"Unsupported audio dimensionality: {data.ndim}D.",
             status_code=400,
         )
+
+    if mono_signal.size == 0:
+        raise AudioValidationError("Decoded audio stream contains zero samples.", status_code=400)
 
     duration = float(len(mono_signal) / orig_sr)
     if duration < MIN_DURATION_SECONDS:
@@ -143,15 +156,39 @@ def preprocess_audio(content: bytes, filename: str) -> PreprocessedAudio:
     # Resample to target sample rate (16 kHz)
     standardized_signal = resample_signal(mono_signal, orig_sr, TARGET_SAMPLE_RATE)
 
+    if standardized_signal.size == 0:
+        raise AudioValidationError("Standardized audio signal contains zero samples.", status_code=400)
+
+    if not np.all(np.isfinite(standardized_signal)):
+        raise AudioValidationError(
+            "Standardized audio contains non-finite numeric values.",
+            status_code=400,
+        )
+
+    # Silent-audio validation (MUST be performed before peak normalization)
+    raw_peak = float(np.max(np.abs(standardized_signal)))
+    raw_rms = float(np.sqrt(np.mean(standardized_signal**2)))
+
+    if raw_peak == 0.0 or raw_rms == 0.0:
+        raise AudioValidationError(
+            "Audio is completely silent (contains no audible signal).",
+            status_code=400,
+        )
+
+    if raw_rms < MIN_RMS_THRESHOLD:
+        raise AudioValidationError(
+            f"Audio is effectively silent (RMS energy {raw_rms:.6f} is below minimum threshold of {MIN_RMS_THRESHOLD}).",
+            status_code=400,
+        )
+
     # Peak normalization
-    peak = float(np.max(np.abs(standardized_signal)))
-    if peak > 0.0:
-        standardized_signal = standardized_signal / peak
+    if raw_peak > 0.0:
+        standardized_signal = standardized_signal / raw_peak
         peak_normalized = 1.0
     else:
         peak_normalized = 0.0
 
-    # Calculate RMS energy
+    # Calculate RMS energy of normalized signal
     rms = float(np.sqrt(np.mean(standardized_signal**2)))
 
     metadata = AudioMetadata(
