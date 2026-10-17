@@ -28,3 +28,16 @@ Thumbs.db
 # Uploaded / Temporary artifacts
 temp_audio/
 *.tmp
+
+# Datasets and Archives
+data/
+*.zip
+
+# Audio files
+*.flac
+*.wav
+
+# Model checkpoints and weights
+model/checkpoints/
+*.pt
+*.pth
