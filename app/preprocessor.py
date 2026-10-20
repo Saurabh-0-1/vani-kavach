@@ -1,7 +1,9 @@
+
 """Audio Validation and Preprocessing Module for Vani Kavach.
 
-Provides strict audio validation, decoding, channel unification (mono),
-sample-rate standardization (16 kHz), and amplitude normalization.
+Provides audio validation, decoding, channel unification (mono),
+sample-rate standardization (16 kHz), amplitude normalization,
+and CNN spectrogram feature extraction.
 """
 
 from __future__ import annotations
@@ -10,15 +12,16 @@ import io
 from dataclasses import asdict, dataclass
 from math import gcd
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
+import librosa
 import numpy as np
 import scipy.signal
 import soundfile as sf
 
 
 class AudioValidationError(Exception):
-    """Raised when an uploaded file fails validation or cannot be decoded."""
+    """Raised when an uploaded audio file fails validation."""
 
     def __init__(self, message: str, status_code: int = 400) -> None:
         super().__init__(message)
@@ -26,14 +29,16 @@ class AudioValidationError(Exception):
         self.status_code = status_code
 
 
-# Audio engineering standards
-TARGET_SAMPLE_RATE: int = 16000  # 16 kHz: Standard for ASVspoof benchmarks and speech models
-MIN_DURATION_SECONDS: float = 0.5  # Need at least 0.5s for meaningful acoustic framing
-MAX_DURATION_SECONDS: float = 120.0  # Cap at 2 minutes for baseline processing
-MAX_FILE_SIZE_BYTES: int = 15 * 1024 * 1024  # 15 MB max file upload limit
-SUPPORTED_EXTENSIONS: set[str] = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
-MIN_RMS_THRESHOLD: float = 0.001  # -60 dBFS: Minimum acoustic energy to distinguish speech/audio from silence
-MIN_RMS_ENERGY: float = MIN_RMS_THRESHOLD
+# Audio validation standards
+TARGET_SAMPLE_RATE = 16000
+MIN_DURATION_SECONDS = 0.5
+MAX_DURATION_SECONDS = 120.0
+MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024
+
+SUPPORTED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+
+MIN_RMS_THRESHOLD = 0.001
+MIN_RMS_ENERGY = MIN_RMS_THRESHOLD
 
 
 @dataclass
@@ -47,7 +52,7 @@ class AudioMetadata:
     peak_amplitude: float
     rms_energy: float
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -59,9 +64,13 @@ class PreprocessedAudio:
 
 
 def validate_file_envelope(content: bytes, filename: str) -> None:
-    """Validate file size and extension before attempting decoding."""
-    if not content or len(content) == 0:
-        raise AudioValidationError("Audio file is empty (0 bytes).", status_code=400)
+    """Validate file size and extension before decoding."""
+
+    if not content:
+        raise AudioValidationError(
+            "Audio file is empty (0 bytes).",
+            status_code=400,
+        )
 
     if len(content) > MAX_FILE_SIZE_BYTES:
         max_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
@@ -71,52 +80,60 @@ def validate_file_envelope(content: bytes, filename: str) -> None:
         )
 
     ext = Path(filename).suffix.lower()
+
     if ext not in SUPPORTED_EXTENSIONS:
         supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
         raise AudioValidationError(
-            f"Unsupported audio format '{ext}'. Supported formats: {supported}.",
+            f"Unsupported audio format '{ext}'. "
+            f"Supported formats: {supported}.",
             status_code=400,
         )
 
 
-def resample_signal(signal: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
-    """Resample 1D signal to target sample rate using polyphase filtering."""
+def resample_signal(
+    signal: np.ndarray,
+    orig_sr: int,
+    target_sr: int,
+) -> np.ndarray:
+    """Resample a 1D waveform using polyphase filtering."""
+
     if orig_sr == target_sr:
         return signal.astype(np.float32)
 
     common_gcd = gcd(orig_sr, target_sr)
     up = target_sr // common_gcd
     down = orig_sr // common_gcd
+
     resampled = scipy.signal.resample_poly(signal, up, down)
     return resampled.astype(np.float32)
 
 
-def preprocess_audio(content: bytes, filename: str) -> PreprocessedAudio:
-    """Validate, decode, and preprocess raw audio bytes.
+def preprocess_audio(
+    content: bytes,
+    filename: str,
+) -> PreprocessedAudio:
+    """Validate, decode, and standardize uploaded audio."""
 
-    Steps:
-    1. Size and extension checks.
-    2. Soundfile decoding (handles WAV, FLAC, OGG, and supported MP3 containers).
-    3. Structural & numerical integrity checks (zero samples, non-finite values).
-    4. Duration boundary checks [0.5s - 120s].
-    5. Stereo/multichannel to mono mixdown.
-    6. Resampling to 16 kHz.
-    7. Silent-audio and energy floor validation (before peak normalization).
-    8. Peak amplitude normalization to [-1.0, 1.0].
-    9. Acoustic metadata extraction (duration, peak, RMS energy).
-    """
     validate_file_envelope(content, filename)
 
     try:
-        data, orig_sr = sf.read(io.BytesIO(content), dtype="float32", always_2d=False)
+        data, orig_sr = sf.read(
+            io.BytesIO(content),
+            dtype="float32",
+            always_2d=False,
+        )
     except Exception as exc:
         raise AudioValidationError(
-            f"Failed to decode audio file. The file may be corrupt or malformed: {exc}",
+            "Failed to decode audio file. "
+            f"The file may be corrupt or malformed: {exc}",
             status_code=400,
         ) from exc
 
     if data.size == 0:
-        raise AudioValidationError("Decoded audio stream contains zero samples.", status_code=400)
+        raise AudioValidationError(
+            "Decoded audio stream contains zero samples.",
+            status_code=400,
+        )
 
     if not np.all(np.isfinite(data)):
         raise AudioValidationError(
@@ -124,7 +141,7 @@ def preprocess_audio(content: bytes, filename: str) -> PreprocessedAudio:
             status_code=400,
         )
 
-    # Determine original channels and mix down to mono
+    # Convert stereo or multichannel audio to mono.
     if data.ndim == 1:
         orig_channels = 1
         mono_signal = data
@@ -138,26 +155,39 @@ def preprocess_audio(content: bytes, filename: str) -> PreprocessedAudio:
         )
 
     if mono_signal.size == 0:
-        raise AudioValidationError("Decoded audio stream contains zero samples.", status_code=400)
+        raise AudioValidationError(
+            "Decoded audio stream contains zero samples.",
+            status_code=400,
+        )
 
     duration = float(len(mono_signal) / orig_sr)
+
     if duration < MIN_DURATION_SECONDS:
         raise AudioValidationError(
-            f"Audio duration ({duration:.2f}s) is shorter than minimum required ({MIN_DURATION_SECONDS}s).",
+            f"Audio duration ({duration:.2f}s) is shorter than "
+            f"minimum required ({MIN_DURATION_SECONDS}s).",
             status_code=400,
         )
 
     if duration > MAX_DURATION_SECONDS:
         raise AudioValidationError(
-            f"Audio duration ({duration:.2f}s) exceeds maximum allowed limit ({MAX_DURATION_SECONDS}s).",
+            f"Audio duration ({duration:.2f}s) exceeds "
+            f"maximum allowed limit ({MAX_DURATION_SECONDS}s).",
             status_code=400,
         )
 
-    # Resample to target sample rate (16 kHz)
-    standardized_signal = resample_signal(mono_signal, orig_sr, TARGET_SAMPLE_RATE)
+    # Standardize to 16 kHz.
+    standardized_signal = resample_signal(
+        mono_signal,
+        orig_sr,
+        TARGET_SAMPLE_RATE,
+    )
 
     if standardized_signal.size == 0:
-        raise AudioValidationError("Standardized audio signal contains zero samples.", status_code=400)
+        raise AudioValidationError(
+            "Standardized audio signal contains zero samples.",
+            status_code=400,
+        )
 
     if not np.all(np.isfinite(standardized_signal)):
         raise AudioValidationError(
@@ -165,7 +195,7 @@ def preprocess_audio(content: bytes, filename: str) -> PreprocessedAudio:
             status_code=400,
         )
 
-    # Silent-audio validation (MUST be performed before peak normalization)
+    # Reject silence before amplitude normalization.
     raw_peak = float(np.max(np.abs(standardized_signal)))
     raw_rms = float(np.sqrt(np.mean(standardized_signal**2)))
 
@@ -177,18 +207,18 @@ def preprocess_audio(content: bytes, filename: str) -> PreprocessedAudio:
 
     if raw_rms < MIN_RMS_THRESHOLD:
         raise AudioValidationError(
-            f"Audio is effectively silent (RMS energy {raw_rms:.6f} is below minimum threshold of {MIN_RMS_THRESHOLD}).",
+            f"Audio is effectively silent (RMS energy {raw_rms:.6f} "
+            f"is below minimum threshold of {MIN_RMS_THRESHOLD}).",
             status_code=400,
         )
 
-    # Peak normalization
+    # Peak normalization.
     if raw_peak > 0.0:
         standardized_signal = standardized_signal / raw_peak
         peak_normalized = 1.0
     else:
         peak_normalized = 0.0
 
-    # Calculate RMS energy of normalized signal
     rms = float(np.sqrt(np.mean(standardized_signal**2)))
 
     metadata = AudioMetadata(
@@ -207,3 +237,72 @@ def preprocess_audio(content: bytes, filename: str) -> PreprocessedAudio:
         sample_rate=TARGET_SAMPLE_RATE,
         metadata=metadata,
     )
+
+
+# Spectrogram feature extraction settings used by the CNN.
+N_FFT = 512
+HOP_LENGTH = 160
+SPECTROGRAM_FRAMES = 128
+SPECTROGRAM_BINS = 128
+SPECTROGRAM_TOP_DB = 80.0
+
+
+def extract_spectrogram(
+    signal: np.ndarray,
+    n_fft: int = N_FFT,
+    hop_length: int = HOP_LENGTH,
+    target_frames: int = SPECTROGRAM_FRAMES,
+    target_bins: int = SPECTROGRAM_BINS,
+    top_db: float = SPECTROGRAM_TOP_DB,
+) -> np.ndarray:
+    """Create a normalized spectrogram matching Colab training.
+
+    Input:
+        A mono waveform sampled at 16 kHz.
+
+    Output:
+        Float32 array with shape (128, 128, 1).
+    """
+
+    if signal.ndim != 1:
+        raise ValueError(
+            "Signal must be a 1D mono waveform, "
+            f"got {signal.ndim}D array with shape {signal.shape}."
+        )
+
+    signal_float32 = signal.astype(np.float32)
+
+    # STFT and magnitude.
+    stft = librosa.stft(
+        signal_float32,
+        n_fft=n_fft,
+        hop_length=hop_length,
+    )
+    magnitude = np.abs(stft)
+
+    # Convert magnitude to decibels relative to the maximum.
+    spec_db = librosa.amplitude_to_db(
+        magnitude,
+        ref=np.max,
+    )
+
+    # Retain the first 128 frequency bins.
+    spec_db = spec_db[:target_bins, :]
+
+    # Match Colab's librosa.util.fix_length behavior.
+    # Default padding is 0 dB, which becomes 1.0 after scaling.
+    spec_resized = librosa.util.fix_length(
+        spec_db,
+        size=target_frames,
+        axis=1,
+    )
+
+    # Normalize values to [0, 1], matching the training function.
+    scaled = np.clip(
+        (spec_resized + top_db) / top_db,
+        0.0,
+        1.0,
+    )
+
+    # Add the CNN channel dimension.
+    return np.expand_dims(scaled, axis=-1).astype(np.float32)

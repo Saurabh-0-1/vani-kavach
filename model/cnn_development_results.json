@@ -1,0 +1,47 @@
+{
+  "model": "CNN spectrogram classifier",
+  "status": "experimental",
+  "training_samples": 2000,
+  "development_samples": 400,
+  "threshold": 0.5,
+  "accuracy": 0.9325,
+  "balanced_accuracy": 0.9325,
+  "confusion_matrix": [
+    [
+      195,
+      5
+    ],
+    [
+      22,
+      178
+    ]
+  ],
+  "classification_report": {
+    "bonafide": {
+      "precision": 0.8986175115207373,
+      "recall": 0.975,
+      "f1-score": 0.935251798561151,
+      "support": 200.0
+    },
+    "spoof": {
+      "precision": 0.9726775956284153,
+      "recall": 0.89,
+      "f1-score": 0.9295039164490861,
+      "support": 200.0
+    },
+    "accuracy": 0.9325,
+    "macro avg": {
+      "precision": 0.9356475535745763,
+      "recall": 0.9325,
+      "f1-score": 0.9323778575051186,
+      "support": 400.0
+    },
+    "weighted avg": {
+      "precision": 0.9356475535745764,
+      "recall": 0.9325,
+      "f1-score": 0.9323778575051186,
+      "support": 400.0
+    }
+  },
+  "note": "Balanced development subset; preliminary result, not a real-world performance guarantee."
+}

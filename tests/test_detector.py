@@ -7,6 +7,8 @@ and FastAPI endpoints.
 from __future__ import annotations
 
 import io
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
 import soundfile as sf
@@ -18,6 +20,7 @@ from app.preprocessor import (
     AudioValidationError,
     MIN_RMS_THRESHOLD,
     TARGET_SAMPLE_RATE,
+    extract_spectrogram,
     preprocess_audio,
 )
 
@@ -154,8 +157,8 @@ def test_non_finite_audio_rejection():
 
 
 def test_untrained_detector_contract():
-    """Verify that detector strictly adheres to untrained contract without fake scores."""
-    detector = AudioAuthenticityDetector()
+    """Verify that detector strictly adheres to untrained contract without fake scores when model_path=None."""
+    detector = AudioAuthenticityDetector(model_path=None)
     audio_bytes = generate_test_wav(duration=1.0, sample_rate=16000, channels=1)
     preprocessed = preprocess_audio(audio_bytes, "test.wav")
 
@@ -169,19 +172,47 @@ def test_untrained_detector_contract():
     assert "ASVspoof" in analysis["disclaimer"]
 
 
+def test_untrained_fallback_missing_file():
+    """Verify that detector falls back to untrained when model file is not found."""
+    detector = AudioAuthenticityDetector(model_path="nonexistent_checkpoint.keras")
+    assert detector.model_status == "untrained"
+    assert detector.is_trained is False
+
+    audio_bytes = generate_test_wav(duration=1.0, sample_rate=16000, channels=1)
+    preprocessed = preprocess_audio(audio_bytes, "test.wav")
+    analysis = detector.analyze(preprocessed)
+
+    assert analysis["model_status"] == "untrained"
+    assert analysis["verdict"] is None
+
+
 # ---------------------------------------------------------------------------
 # Integration Tests: FastAPI Endpoints
 # ---------------------------------------------------------------------------
 
 
-def test_health_endpoint():
-    """Test GET /api/v1/health returns healthy status and untrained model indicator."""
+def test_health_endpoint_experimental():
+    """Test GET /api/v1/health dynamically reports experimental status when CNN is active."""
+    response = client.get("/api/v1/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert data["model_status"] == "experimental"
+    assert data["is_model_trained"] is True
+    assert "development subset" in data["disclaimer"]
+    assert "balanced" in data["disclaimer"]
+
+
+def test_health_endpoint_untrained_fallback(monkeypatch):
+    """Test GET /api/v1/health dynamically reports untrained status when model is disabled."""
+    monkeypatch.setattr("app.main.detector_instance", AudioAuthenticityDetector(model_path=None))
     response = client.get("/api/v1/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
     assert data["model_status"] == "untrained"
-    assert ".wav" in data["supported_formats"]
+    assert data["is_model_trained"] is False
+    assert "untrained" in data["disclaimer"].lower()
 
 
 def test_api_validate_valid_file():
@@ -236,8 +267,9 @@ def test_api_analyze_silent_file():
     assert "silent" in response.json()["detail"].lower()
 
 
-def test_api_analyze_untrained_status():
-    """Test POST /api/v1/analyze emits valid metadata and strict untrained status."""
+def test_api_analyze_untrained_status(monkeypatch):
+    """Test POST /api/v1/analyze emits valid metadata and strict untrained status when model is disabled."""
+    monkeypatch.setattr("app.main.detector_instance", AudioAuthenticityDetector(model_path=None))
     wav_bytes = generate_test_wav(duration=1.2, sample_rate=22050)
     files = {"file": ("call_sample.wav", io.BytesIO(wav_bytes), "audio/wav")}
 
@@ -256,10 +288,191 @@ def test_api_analyze_untrained_status():
     assert data["contextual_risk_assessment"]["risk_tier"] == "NOT_ASSESSED"
 
 
-def test_web_index_page():
-    """Test that the web UI index page renders with disclaimers."""
+def test_api_analyze_experimental_status():
+    """Test POST /api/v1/analyze emits experimental analysis when default CNN is active."""
+    wav_bytes = generate_test_wav(duration=1.2, sample_rate=16000)
+    files = {"file": ("call_sample.wav", io.BytesIO(wav_bytes), "audio/wav")}
+
+    response = client.post("/api/v1/analyze", files=files)
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["status"] == "success"
+    assert data["audio_validation"]["is_valid"] is True
+    analysis = data["authenticity_analysis"]
+    assert analysis["model_status"] == "experimental"
+    assert analysis["verdict"] in ["bonafide", "spoof"]
+    assert analysis["prediction"] in ["bonafide", "spoof"]
+    assert 0.0 <= analysis["uncalibrated_spoof_probability"] <= 1.0
+    assert analysis["confidence"] is None
+    assert "balanced development subset" in analysis["disclaimer"]
+
+
+def test_web_index_page_experimental():
+    """Test that the web UI index page renders experimental model banner and tags."""
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Vani Kavach" in response.text
+    assert "EXPERIMENTAL MODEL" in response.text
+    assert "balanced development subset" in response.text
+    assert "audioFileInput" in response.text
+
+
+def test_web_index_page_untrained_fallback(monkeypatch):
+    """Test that the web UI index page renders untrained banner when model is disabled."""
+    monkeypatch.setattr("app.main.detector_instance", AudioAuthenticityDetector(model_path=None))
     response = client.get("/")
     assert response.status_code == 200
     assert "Vani Kavach" in response.text
     assert "UNTRAINED" in response.text
     assert "audioFileInput" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests: Spectrogram Feature Extraction (Stage 1 CNN Preprocessing)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_spectrogram_output_shape_and_dtype():
+    """Verify that spectrogram extraction yields strictly (128, 128, 1) float32."""
+    audio_bytes = generate_test_wav(duration=1.0, sample_rate=16000, channels=1)
+    preprocessed = preprocess_audio(audio_bytes, "test.wav")
+    spec = extract_spectrogram(preprocessed.signal)
+
+    assert spec.shape == (128, 128, 1)
+    assert spec.dtype == np.float32
+
+
+def test_extract_spectrogram_finite_values_and_normalized_range():
+    """Verify that all spectrogram values are finite and strictly bounded within [0.0, 1.0]."""
+    audio_bytes = generate_test_wav(duration=1.0, sample_rate=16000, channels=1, amplitude=0.8)
+    preprocessed = preprocess_audio(audio_bytes, "test.wav")
+    spec = extract_spectrogram(preprocessed.signal)
+
+    assert np.all(np.isfinite(spec))
+    assert float(spec.min()) >= 0.0
+    assert float(spec.max()) <= 1.0
+    # Peak bin in dB relative to max is 0 dB, which maps to (0 + 80) / 80 = 1.0
+    assert np.isclose(float(spec.max()), 1.0, atol=1e-4)
+
+
+def test_extract_spectrogram_short_audio_padding():
+    """Verify that short audio (< 128 frames, e.g. 0.5s) is padded to 128 frames and stays bounded."""
+    audio_bytes = generate_test_wav(duration=0.5, sample_rate=16000, channels=1)
+    preprocessed = preprocess_audio(audio_bytes, "short_0.5s.wav")
+    spec = extract_spectrogram(preprocessed.signal)
+
+    assert spec.shape == (128, 128, 1)
+    assert spec.dtype == np.float32
+    assert np.all(np.isfinite(spec))
+    assert float(spec.min()) >= 0.0
+    assert float(spec.max()) <= 1.0
+    # Right-padded frames should be 1.0: librosa.util.fix_length pads with
+    # 0 dB, which maps to (0 + 80) / 80 = 1.0 after normalization.
+    assert np.all(spec[:, -1, 0] == 1.0)
+
+
+def test_extract_spectrogram_long_audio_truncation():
+    """Verify that longer audio (> 128 frames, e.g. 2.5s) is truncated to exactly 128 frames."""
+    audio_bytes = generate_test_wav(duration=2.5, sample_rate=16000, channels=1)
+    preprocessed = preprocess_audio(audio_bytes, "long_2.5s.wav")
+    spec = extract_spectrogram(preprocessed.signal)
+
+    assert spec.shape == (128, 128, 1)
+    assert spec.dtype == np.float32
+    assert np.all(np.isfinite(spec))
+    assert float(spec.min()) >= 0.0
+    assert float(spec.max()) <= 1.0
+
+
+def test_extract_spectrogram_rejects_non_1d_signal():
+    """Verify that passing multidimensional array raises ValueError."""
+    stereo_signal = np.zeros((16000, 2), dtype=np.float32)
+    with pytest.raises(ValueError) as exc_info:
+        extract_spectrogram(stereo_signal)
+    assert "1D mono" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests: Stage 2 Experimental Inference & Mocking
+# ---------------------------------------------------------------------------
+
+
+def test_experimental_inference_mocked_bonafide():
+    """Verify experimental inference with mocked prediction below 0.5 returns bonafide."""
+    detector = AudioAuthenticityDetector(model_path=None)
+    mock_model = MagicMock()
+    mock_model.predict.return_value = np.array([[0.15]], dtype=np.float32)
+    detector.model = mock_model
+    detector.model_status = "experimental"
+
+    audio_bytes = generate_test_wav(duration=1.0, sample_rate=16000)
+    preprocessed = preprocess_audio(audio_bytes, "test.wav")
+    analysis = detector.analyze(preprocessed)
+
+    assert analysis["model_status"] == "experimental"
+    assert analysis["verdict"] == "bonafide"
+    assert analysis["prediction"] == "bonafide"
+    assert analysis["uncalibrated_spoof_probability"] == 0.15
+    assert analysis["authenticity_score"] == 0.85
+    assert analysis["confidence"] is None
+    assert analysis["threshold"] == 0.5
+    assert "balanced development subset" in analysis["disclaimer"]
+    mock_model.predict.assert_called_once()
+    assert mock_model.predict.call_args[0][0].shape == (1, 128, 128, 1)
+
+
+def test_experimental_inference_mocked_spoof():
+    """Verify experimental inference with mocked prediction at/above 0.5 returns spoof."""
+    detector = AudioAuthenticityDetector(model_path=None)
+    mock_model = MagicMock()
+    mock_model.predict.return_value = np.array([[0.88]], dtype=np.float32)
+    detector.model = mock_model
+    detector.model_status = "experimental"
+
+    audio_bytes = generate_test_wav(duration=1.0, sample_rate=16000)
+    preprocessed = preprocess_audio(audio_bytes, "test.wav")
+    analysis = detector.analyze(preprocessed)
+
+    assert analysis["model_status"] == "experimental"
+    assert analysis["verdict"] == "spoof"
+    assert analysis["prediction"] == "spoof"
+    assert analysis["uncalibrated_spoof_probability"] == 0.88
+    assert analysis["authenticity_score"] == 0.12
+    assert analysis["confidence"] is None
+
+
+def test_experimental_inference_mocked_exception_fallback():
+    """Verify that runtime inference exception safely falls back to untrained response."""
+    detector = AudioAuthenticityDetector(model_path=None)
+    mock_model = MagicMock()
+    mock_model.predict.side_effect = RuntimeError("Inference tensor error")
+    detector.model = mock_model
+    detector.model_status = "experimental"
+
+    audio_bytes = generate_test_wav(duration=1.0, sample_rate=16000)
+    preprocessed = preprocess_audio(audio_bytes, "test.wav")
+    analysis = detector.analyze(preprocessed)
+
+    assert analysis["model_status"] == "untrained"
+    assert analysis["verdict"] is None
+    assert analysis["authenticity_score"] is None
+
+
+def test_experimental_inference_real_model_smoke():
+    """Smoke test running inference through the actual experimental CNN checkpoint."""
+    detector = AudioAuthenticityDetector()
+    assert detector.is_trained is True
+    assert detector.model_status == "experimental"
+
+    audio_bytes = generate_test_wav(duration=1.0, sample_rate=16000)
+    preprocessed = preprocess_audio(audio_bytes, "smoke.wav")
+    analysis = detector.analyze(preprocessed)
+
+    assert analysis["model_status"] == "experimental"
+    assert analysis["verdict"] in ["bonafide", "spoof"]
+    assert 0.0 <= analysis["uncalibrated_spoof_probability"] <= 1.0
+    assert analysis["confidence"] is None
+    assert "balanced development subset" in analysis["disclaimer"]
+
+

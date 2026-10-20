@@ -1,10 +1,12 @@
+fastapi
+uvicorn
+python-multipart
+httpx
 numpy
 scipy
 soundfile
 librosa
 scikit-learn
+keras>=3.0.0
+h5py
 pytest
-fastapi
-uvicorn
-python-multipart
-httpx

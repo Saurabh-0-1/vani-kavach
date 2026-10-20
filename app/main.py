@@ -38,18 +38,28 @@ async def audio_validation_exception_handler(_request, exc: AudioValidationError
 @app.get("/api/v1/health")
 async def health_check() -> Dict[str, Any]:
     """Service health and environment status endpoint."""
+    model_status = detector_instance.model_status
+    if model_status == "experimental":
+        disclaimer = (
+            "Authenticity model is an experimental CNN trained on a balanced 400-recording development subset. "
+            "It is an uncalibrated prototype and is not validated for real-world scam or deepfake detection."
+        )
+    else:
+        disclaimer = (
+            "Authenticity model is currently untrained. "
+            "No deepfake detection or synthetic voice scoring is active."
+        )
+
     return {
         "status": "healthy",
         "service": "Vani Kavach - Voice Authenticity & Scam Defense",
         "version": "0.1.0",
         "python_version": sys.version.split()[0],
-        "model_status": "untrained",
+        "model_status": model_status,
+        "is_model_trained": detector_instance.is_trained,
         "supported_formats": sorted(list(SUPPORTED_EXTENSIONS)),
         "target_sample_rate_hz": TARGET_SAMPLE_RATE,
-        "disclaimer": (
-            "Authenticity model is currently untrained. "
-            "No deepfake detection or synthetic voice scoring is active."
-        ),
+        "disclaimer": disclaimer,
     }
 
 
@@ -119,7 +129,40 @@ async def analyze_audio_endpoint(file: UploadFile = File(...)) -> Dict[str, Any]
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     """Serve the interactive web interface for audio upload and validation."""
-    html_content = """<!DOCTYPE html>
+    is_experimental = detector_instance.model_status == "experimental"
+
+    if is_experimental:
+        banner_html = """
+    <div class="status-banner experimental">
+      <span style="font-size: 1.25rem;">🧪</span>
+      <div>
+        <strong>Scientific Integrity Standard:</strong>
+        Authenticity classifier is in <strong>EXPERIMENTAL MODEL</strong> mode.
+        Evaluated on a selected balanced development subset (400 recordings, 93.25% dev accuracy).
+        <strong>Not validated for real-world scam or deepfake detection.</strong>
+      </div>
+    </div>"""
+        initial_status_tag = '<span class="tag-experimental" id="modelStatusTag">EXPERIMENTAL MODEL</span>'
+        initial_disclaimer = (
+            "Model evaluated on a selected balanced development subset (400 recordings, 93.25% dev accuracy). "
+            "Preliminary experimental prototype — not validated for real-world scam or deepfake detection."
+        )
+    else:
+        banner_html = """
+    <div class="status-banner warning">
+      <span style="font-size: 1.25rem;">⚠️</span>
+      <div>
+        <strong>Ethical & Scientific Integrity Standard:</strong>
+        Authenticity classifier is currently <strong>untrained</strong>. No synthetic probabilities, deepfake verdicts, or replay claims are generated.
+      </div>
+    </div>"""
+        initial_status_tag = '<span class="tag-untrained" id="modelStatusTag">UNTRAINED</span>'
+        initial_disclaimer = (
+            "As per academic benchmarks (ASVspoof), synthetic voice classification requires trained feature "
+            "extractors (LFCC/CQCC) and evaluated backbones (AASIST/RawNet2). No fabricated scores are emitted."
+        )
+
+    html_template = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -243,6 +286,11 @@ async def index() -> HTMLResponse:
       border: 1px solid rgba(245, 158, 11, 0.3);
       color: #fbbf24;
     }
+    .status-banner.experimental {
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.35);
+      color: #67e8f9;
+    }
     .results-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -288,6 +336,37 @@ async def index() -> HTMLResponse:
       color: #fbbf24;
       font-weight: 700;
       font-size: 0.75rem;
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+    .tag-experimental {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 0.3rem;
+      background: rgba(6, 182, 212, 0.2);
+      color: #67e8f9;
+      font-weight: 700;
+      font-size: 0.75rem;
+      border: 1px solid rgba(6, 182, 212, 0.4);
+    }
+    .tag-spoof {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 0.3rem;
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      font-weight: 700;
+      font-size: 0.75rem;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+    .tag-bonafide {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 0.3rem;
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      font-weight: 700;
+      font-size: 0.75rem;
+      border: 1px solid rgba(16, 185, 129, 0.4);
     }
     .info-footer {
       text-align: center;
@@ -306,13 +385,7 @@ async def index() -> HTMLResponse:
       <p class="subtitle">AI Voice Authenticity & Scam-Defense Framework. Preprocessing and signal validation stage.</p>
     </header>
 
-    <div class="status-banner warning">
-      <span style="font-size: 1.25rem;">⚠️</span>
-      <div>
-        <strong>Ethical & Scientific Integrity Standard:</strong>
-        Authenticity classifier is currently <strong>untrained</strong>. No synthetic probabilities, deepfake verdicts, or replay claims are generated.
-      </div>
-    </div>
+    <!-- STATUS_BANNER_PLACEHOLDER -->
 
     <div class="card">
       <h2 style="font-size: 1.15rem; margin-bottom: 1rem;">1. Upload Audio For Validation & Preprocessing</h2>
@@ -347,12 +420,24 @@ async def index() -> HTMLResponse:
         </div>
         <div class="meta-box">
           <h3>Authenticity Model Status</h3>
-          <div style="margin-top: 0.5rem; margin-bottom: 0.75rem;">
-            <span class="tag-untrained" id="modelStatusTag">UNTRAINED</span>
+          <div style="margin-top: 0.5rem; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+            <!-- STATUS_TAG_PLACEHOLDER -->
+            <span id="verdictBadge" style="display: none;"></span>
           </div>
-          <p id="modelMessage" style="font-size: 0.85rem; color: #fbbf24; margin-bottom: 0.5rem;"></p>
-          <p style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.4;">
-            As per academic benchmarks (ASVspoof), synthetic voice classification requires trained feature extractors (LFCC/CQCC) and evaluated backbones (AASIST/RawNet2). No fabricated scores are emitted.
+          <p id="modelMessage" style="font-size: 0.85rem; color: #fbbf24; margin-bottom: 0.75rem;"></p>
+
+          <div id="inferenceDetails" style="display: none; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-subtle); border-radius: 0.375rem; padding: 0.75rem; margin-bottom: 0.75rem;">
+            <div class="meta-item"><span>Classification Verdict</span><span id="verdictText">-</span></div>
+            <div class="meta-item"><span>Uncalibrated Spoof Probability</span><span id="spoofProbText">-</span></div>
+            <div class="meta-item"><span>Authenticity Score (1 - Spoof)</span><span id="authScoreText">-</span></div>
+            <div class="meta-item"><span>Decision Threshold</span><span>0.50</span></div>
+            <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 0.5rem; line-height: 1.3;">
+              * Note: Raw model outputs are uncalibrated acoustic development estimates, not validated real-world confidence metrics.
+            </div>
+          </div>
+
+          <p id="modelDisclaimerText" style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.4;">
+            <!-- INITIAL_DISCLAIMER_PLACEHOLDER -->
           </p>
         </div>
       </div>
@@ -429,8 +514,43 @@ async def index() -> HTMLResponse:
         document.getElementById('metaSamples').textContent = meta.num_samples.toLocaleString();
         document.getElementById('metaRms').textContent = meta.rms_energy;
 
-        document.getElementById('modelStatusTag').textContent = data.authenticity_analysis.model_status.toUpperCase();
-        document.getElementById('modelMessage').textContent = data.authenticity_analysis.message;
+        const auth = data.authenticity_analysis;
+        const statusTag = document.getElementById('modelStatusTag');
+        const verdictBadge = document.getElementById('verdictBadge');
+        const modelMessage = document.getElementById('modelMessage');
+        const inferenceDetails = document.getElementById('inferenceDetails');
+        const disclaimerText = document.getElementById('modelDisclaimerText');
+
+        if (auth.model_status === 'experimental') {
+          statusTag.className = 'tag-experimental';
+          statusTag.textContent = 'EXPERIMENTAL MODEL';
+          modelMessage.textContent = auth.message;
+          modelMessage.style.color = '#38bdf8';
+
+          if (auth.verdict) {
+            verdictBadge.textContent = auth.verdict.toUpperCase();
+            verdictBadge.className = auth.verdict === 'spoof' ? 'tag-spoof' : 'tag-bonafide';
+            verdictBadge.style.display = 'inline-block';
+
+            document.getElementById('verdictText').textContent = auth.verdict.toUpperCase();
+            document.getElementById('spoofProbText').textContent = auth.uncalibrated_spoof_probability !== null ? auth.uncalibrated_spoof_probability : '-';
+            document.getElementById('authScoreText').textContent = auth.authenticity_score !== null ? auth.authenticity_score : '-';
+            inferenceDetails.style.display = 'block';
+          } else {
+            verdictBadge.style.display = 'none';
+            inferenceDetails.style.display = 'none';
+          }
+
+          disclaimerText.textContent = auth.disclaimer;
+        } else {
+          statusTag.className = 'tag-untrained';
+          statusTag.textContent = 'UNTRAINED';
+          verdictBadge.style.display = 'none';
+          modelMessage.textContent = auth.message;
+          modelMessage.style.color = '#fbbf24';
+          inferenceDetails.style.display = 'none';
+          disclaimerText.textContent = auth.disclaimer;
+        }
 
         resultsCard.style.display = 'block';
       } catch (err) {
@@ -445,4 +565,9 @@ async def index() -> HTMLResponse:
 </body>
 </html>
 """
-    return HTMLResponse(content=html_content)
+    final_html = (
+        html_template.replace("<!-- STATUS_BANNER_PLACEHOLDER -->", banner_html)
+        .replace("<!-- STATUS_TAG_PLACEHOLDER -->", initial_status_tag)
+        .replace("<!-- INITIAL_DISCLAIMER_PLACEHOLDER -->", initial_disclaimer)
+    )
+    return HTMLResponse(content=final_html)
