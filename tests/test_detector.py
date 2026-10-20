@@ -308,24 +308,46 @@ def test_api_analyze_experimental_status():
     assert "balanced development subset" in analysis["disclaimer"]
 
 
-def test_web_index_page_experimental():
-    """Test that the web UI index page renders experimental model banner and tags."""
+def test_web_index_page_serves_redesigned_frontend():
+    """Test that the root page serves the redesigned static homepage."""
     response = client.get("/")
     assert response.status_code == 200
-    assert "Vani Kavach" in response.text
-    assert "EXPERIMENTAL MODEL" in response.text
-    assert "balanced development subset" in response.text
-    assert "audioFileInput" in response.text
+    assert "<title>Vani Kavach | Verify the Signal</title>" in response.text
+    assert "Every Voice Has a Signal." in response.text
+    assert 'href="premium.css"' in response.text
 
 
-def test_web_index_page_untrained_fallback(monkeypatch):
-    """Test that the web UI index page renders untrained banner when model is disabled."""
-    monkeypatch.setattr("app.main.detector_instance", AudioAuthenticityDetector(model_path=None))
-    response = client.get("/")
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/style.css",
+        "/premium.css",
+        "/shared.js",
+        "/script.js",
+    ],
+)
+def test_frontend_assets_are_served(path):
+    """Test that all assets referenced by the frontend are available."""
+    response = client.get(path)
     assert response.status_code == 200
-    assert "Vani Kavach" in response.text
-    assert "UNTRAINED" in response.text
-    assert "audioFileInput" in response.text
+    assert response.content
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_text"),
+    [
+        ("/about.html", "About Vani Kavach"),
+        ("/analyze.html", "Analyze Audio | Vani Kavach"),
+        ("/login.html", "Login | Vani Kavach"),
+        ("/signup.html", "Create Account | Vani Kavach"),
+        ("/forgot-password.html", "Forgot Password | Vani Kavach"),
+    ],
+)
+def test_frontend_pages_are_served(path, expected_text):
+    """Test that each redesigned frontend page is available at its linked URL."""
+    response = client.get(path)
+    assert response.status_code == 200
+    assert expected_text in response.text
 
 
 # ---------------------------------------------------------------------------
@@ -474,5 +496,4 @@ def test_experimental_inference_real_model_smoke():
     assert 0.0 <= analysis["uncalibrated_spoof_probability"] <= 1.0
     assert analysis["confidence"] is None
     assert "balanced development subset" in analysis["disclaimer"]
-
 
