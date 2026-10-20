@@ -10,6 +10,7 @@ import sys
 from typing import Any, Dict
 
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.detector import detector_instance
@@ -24,6 +25,18 @@ app = FastAPI(
     title="Vani Kavach API",
     description="Voice Authenticity and Scam-Defense Baseline Pipeline",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5500",
+        "http://localhost:5500",
+        "http://127.0.0.1:8080",
+        "http://localhost:8080",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
 )
 
 
