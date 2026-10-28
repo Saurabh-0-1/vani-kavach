@@ -1,0 +1,273 @@
+{
+  "model_status": "experimental",
+  "threshold": 0.5,
+  "dev_samples": [
+    {
+      "sample_id": "dev_sample_00",
+      "source": "ASVspoof development subset",
+      "true_label": "spoof",
+      "spoof_probability": 0.9994,
+      "authenticity_score": 0.0006,
+      "predicted_label": "spoof",
+      "correct": true
+    },
+    {
+      "sample_id": "dev_sample_01",
+      "source": "ASVspoof development subset",
+      "true_label": "spoof",
+      "spoof_probability": 0.9941,
+      "authenticity_score": 0.0059,
+      "predicted_label": "spoof",
+      "correct": true
+    },
+    {
+      "sample_id": "dev_sample_02",
+      "source": "ASVspoof development subset",
+      "true_label": "spoof",
+      "spoof_probability": 0.9976,
+      "authenticity_score": 0.0024,
+      "predicted_label": "spoof",
+      "correct": true
+    },
+    {
+      "sample_id": "dev_sample_03",
+      "source": "ASVspoof development subset",
+      "true_label": "bonafide",
+      "spoof_probability": 0.2971,
+      "authenticity_score": 0.7029,
+      "predicted_label": "bonafide",
+      "correct": true
+    },
+    {
+      "sample_id": "dev_sample_04",
+      "source": "ASVspoof development subset",
+      "true_label": "bonafide",
+      "spoof_probability": 0.0734,
+      "authenticity_score": 0.9266,
+      "predicted_label": "bonafide",
+      "correct": true
+    },
+    {
+      "sample_id": "dev_sample_05",
+      "source": "ASVspoof development subset",
+      "true_label": "bonafide",
+      "spoof_probability": 0.1398,
+      "authenticity_score": 0.8602,
+      "predicted_label": "bonafide",
+      "correct": true
+    },
+    {
+      "sample_id": "dev_sample_06",
+      "source": "ASVspoof development subset",
+      "true_label": "bonafide",
+      "spoof_probability": 0.0719,
+      "authenticity_score": 0.9281,
+      "predicted_label": "bonafide",
+      "correct": true
+    },
+    {
+      "sample_id": "dev_sample_07",
+      "source": "ASVspoof development subset",
+      "true_label": "spoof",
+      "spoof_probability": 0.9745,
+      "authenticity_score": 0.0255,
+      "predicted_label": "spoof",
+      "correct": true
+    },
+    {
+      "sample_id": "dev_sample_08",
+      "source": "ASVspoof development subset",
+      "true_label": "bonafide",
+      "spoof_probability": 0.0508,
+      "authenticity_score": 0.9492,
+      "predicted_label": "bonafide",
+      "correct": true
+    },
+    {
+      "sample_id": "dev_sample_09",
+      "source": "ASVspoof development subset",
+      "true_label": "bonafide",
+      "spoof_probability": 0.1797,
+      "authenticity_score": 0.8203,
+      "predicted_label": "bonafide",
+      "correct": true
+    }
+  ],
+  "user_recording": {
+    "sample_id": "Recording (2).wav",
+    "source": "Natural microphone recording",
+    "true_label": "bonafide",
+    "spoof_probability": 0.9764,
+    "authenticity_score": 0.0236,
+    "predicted_label": "spoof",
+    "correct": false,
+    "duration_seconds": 16.59,
+    "sample_rate": 16000,
+    "rms_energy": 0.1418
+  },
+  "user_recording_windows": [
+    {
+      "window_range": "0.00s - 1.28s",
+      "rms_energy": 0.0799,
+      "spoof_probability": 0.9917,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "0.64s - 1.92s",
+      "rms_energy": 0.1489,
+      "spoof_probability": 0.9394,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "1.28s - 2.56s",
+      "rms_energy": 0.1769,
+      "spoof_probability": 0.692,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "1.92s - 3.20s",
+      "rms_energy": 0.1678,
+      "spoof_probability": 0.764,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "2.56s - 3.84s",
+      "rms_energy": 0.1423,
+      "spoof_probability": 0.9954,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "3.20s - 4.48s",
+      "rms_energy": 0.1208,
+      "spoof_probability": 0.9954,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "3.84s - 5.12s",
+      "rms_energy": 0.1073,
+      "spoof_probability": 0.9026,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "4.48s - 5.76s",
+      "rms_energy": 0.0671,
+      "spoof_probability": 0.9612,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "5.12s - 6.40s",
+      "rms_energy": 0.1371,
+      "spoof_probability": 0.9866,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "5.76s - 7.04s",
+      "rms_energy": 0.1371,
+      "spoof_probability": 0.981,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "6.40s - 7.68s",
+      "rms_energy": 0.1854,
+      "spoof_probability": 0.9853,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "7.04s - 8.32s",
+      "rms_energy": 0.2219,
+      "spoof_probability": 0.9584,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "7.68s - 8.96s",
+      "rms_energy": 0.1543,
+      "spoof_probability": 0.902,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "8.32s - 9.60s",
+      "rms_energy": 0.1186,
+      "spoof_probability": 0.7447,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "8.96s - 10.24s",
+      "rms_energy": 0.1024,
+      "spoof_probability": 0.8387,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "9.60s - 10.88s",
+      "rms_energy": 0.0788,
+      "spoof_probability": 0.9363,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "10.24s - 11.52s",
+      "rms_energy": 0.1657,
+      "spoof_probability": 0.9715,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "10.88s - 12.16s",
+      "rms_energy": 0.2198,
+      "spoof_probability": 0.9867,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "11.52s - 12.80s",
+      "rms_energy": 0.1609,
+      "spoof_probability": 0.9612,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "12.16s - 13.44s",
+      "rms_energy": 0.1181,
+      "spoof_probability": 0.9974,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "12.80s - 14.08s",
+      "rms_energy": 0.1634,
+      "spoof_probability": 0.9705,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "13.44s - 14.72s",
+      "rms_energy": 0.1531,
+      "spoof_probability": 0.8956,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "14.08s - 15.36s",
+      "rms_energy": 0.1348,
+      "spoof_probability": 0.9504,
+      "predicted_label": "spoof"
+    },
+    {
+      "window_range": "14.72s - 16.00s",
+      "rms_energy": 0.1314,
+      "spoof_probability": 0.9421,
+      "predicted_label": "spoof"
+    }
+  ],
+  "summary": {
+    "dev_samples_count": 10,
+    "dev_accuracy": 1.0,
+    "confusion_matrix": {
+      "tn": 6,
+      "fp": 0,
+      "fn": 0,
+      "tp": 4
+    },
+    "metrics": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "fpr": 0.0,
+      "fnr": 0.0
+    },
+    "user_recording_evaluated": true,
+    "user_recording_false_positive": true
+  }
+}

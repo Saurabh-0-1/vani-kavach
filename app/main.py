@@ -38,8 +38,11 @@ app.add_middleware(
         "http://localhost:5500",
         "http://127.0.0.1:8080",
         "http://localhost:8080",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "*",
     ],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -74,6 +77,11 @@ async def health_check() -> Dict[str, Any]:
         "python_version": sys.version.split()[0],
         "model_status": model_status,
         "is_model_trained": detector_instance.is_trained,
+        "features": {
+            "vad_speech_activity_detection": True,
+            "polyphase_16k_standardization": True,
+            "cnn_spectrogram_inference": detector_instance.is_trained,
+        },
         "supported_formats": sorted(list(SUPPORTED_EXTENSIONS)),
         "target_sample_rate_hz": TARGET_SAMPLE_RATE,
         "disclaimer": disclaimer,

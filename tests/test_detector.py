@@ -497,3 +497,149 @@ def test_experimental_inference_real_model_smoke():
     assert analysis["confidence"] is None
     assert "balanced development subset" in analysis["disclaimer"]
 
+
+# ---------------------------------------------------------------------------
+# Unit & Integration Tests: Prediction Interpretation & Evaluation Logic
+# ---------------------------------------------------------------------------
+
+
+def test_dev_samples_prediction_interpretation_and_label_mapping():
+    """Verify that model output interpretation correctly maps classes without label inversion.
+
+    y=0 must correspond to bonafide (prob < 0.5), y=1 to spoof (prob >= 0.5).
+    """
+    from pathlib import Path
+    from evaluate_false_positives import evaluate_dev_set, load_dev_samples
+
+    npz_path = Path("vani_kavach_dev_samples.npz")
+    if not npz_path.exists():
+        pytest.skip("vani_kavach_dev_samples.npz not available in workspace")
+
+    X, y = load_dev_samples(npz_path)
+    results = evaluate_dev_set(X, y)
+
+    assert len(results) == len(y)
+    for r in results:
+        assert r["correct"] is True
+        if r["true_label"] == "bonafide":
+            assert r["spoof_probability"] < 0.5
+            assert r["predicted_label"] == "bonafide"
+        else:
+            assert r["spoof_probability"] >= 0.5
+            assert r["predicted_label"] == "spoof"
+
+
+def test_user_recording_false_positive_deterministic_reproduction():
+    """Document and verify deterministic reproduction of microphone voice false positive.
+
+    Verifies the model currently classifies the user's natural microphone voice
+    as spoof with probability ~0.9929 due to training distribution mismatch.
+    """
+    from pathlib import Path
+    from evaluate_false_positives import evaluate_audio_file
+
+    wav_path = Path("Recording (2).wav")
+    if not wav_path.exists():
+        pytest.skip("Recording (2).wav not found in workspace")
+
+    result = evaluate_audio_file(wav_path, true_label="bonafide")
+    assert result["true_label"] == "bonafide"
+    assert result["predicted_label"] == "spoof"
+    assert 0.95 <= result["spoof_probability"] <= 1.0
+    assert result["correct"] is False
+
+
+def test_evaluation_pipeline_summary_structure():
+    """Verify the repeatable evaluation pipeline runs and produces expected structure."""
+    from evaluate_false_positives import run_full_evaluation
+
+    eval_results = run_full_evaluation()
+    assert eval_results["model_status"] == "experimental"
+    assert eval_results["threshold"] == 0.5
+    assert len(eval_results["dev_samples"]) > 0
+    assert eval_results["summary"]["dev_samples_count"] == len(eval_results["dev_samples"])
+    assert eval_results["summary"]["dev_accuracy"] == 1.0
+
+
+def test_vad_detection_on_active_speech_and_silence():
+    """Verify VAD correctly detects speech and calculates speech ratio."""
+    from app.preprocessor import detect_voice_activity
+
+    sr = 16000
+    # 2 seconds total: 0.5s silence + 1.0s tone (speech) + 0.5s silence
+    t = np.linspace(0, 2.0, int(sr * 2.0), endpoint=False)
+    sig = np.zeros_like(t, dtype=np.float32)
+    sig[int(0.5 * sr) : int(1.5 * sr)] = 0.5 * np.sin(2 * np.pi * 350.0 * t[: int(1.0 * sr)])
+
+    vad = detect_voice_activity(sig, sample_rate=sr)
+    assert vad["is_speech_detected"] is True
+    assert 0.8 <= vad["speech_duration_seconds"] <= 1.3
+    assert 0.35 <= vad["speech_ratio"] <= 0.70
+
+
+def test_speech_window_selection_avoids_leading_silence():
+    """Verify select_best_speech_window selects the segment with active speech rather than leading silence."""
+    from app.preprocessor import select_best_speech_window
+
+    sr = 16000
+    target_samples = 20480  # 1.28s
+    # 3.0s audio: 1.0s silence + 1.5s loud tone + 0.5s silence
+    t = np.linspace(0, 3.0, int(sr * 3.0), endpoint=False)
+    sig = np.zeros_like(t, dtype=np.float32)
+    sig[int(1.0 * sr) : int(2.5 * sr)] = 0.6 * np.sin(2 * np.pi * 440.0 * t[: int(1.5 * sr)])
+
+    window = select_best_speech_window(sig, target_samples=target_samples, sample_rate=sr)
+    assert len(window) == target_samples
+    window_rms = float(np.sqrt(np.mean(window**2)))
+    first_window_rms = float(np.sqrt(np.mean(sig[:target_samples] ** 2)))
+    # Selected window must have significantly higher energy than the initial window containing leading silence
+    assert window_rms > first_window_rms * 1.5
+
+
+def test_clipping_detection_metric():
+    """Verify preprocessing detects clipped samples."""
+    clipped_bytes = generate_test_wav(duration=1.0, sample_rate=16000, amplitude=1.0)
+    prep = preprocess_audio(clipped_bytes, "clipped.wav")
+    assert hasattr(prep.metadata, "clipping_ratio")
+    assert 0.0 <= prep.metadata.clipping_ratio <= 1.0
+
+
+def test_detector_handles_insufficient_speech_inconclusive():
+    """Verify detector returns inconclusive when audio metadata reports no speech detected."""
+    audio_bytes = generate_test_wav(duration=1.0, sample_rate=16000)
+    prep = preprocess_audio(audio_bytes, "test.wav")
+    prep.metadata.is_speech_detected = False
+
+    detector = AudioAuthenticityDetector()
+    analysis = detector.analyze(prep)
+
+    assert analysis["verdict"] == "inconclusive"
+    assert analysis["verdict_category"] == "inconclusive"
+    assert analysis["confidence_tier"] == "insufficient_speech"
+    assert analysis["uncalibrated_spoof_probability"] is None
+
+
+def test_api_validate_includes_speech_metrics():
+    """Test POST /api/v1/audio/validate returns VAD and clipping metrics in metadata."""
+    wav_bytes = generate_test_wav(duration=1.0, sample_rate=16000)
+    files = {"file": ("vad_sample.wav", io.BytesIO(wav_bytes), "audio/wav")}
+
+    response = client.post("/api/v1/audio/validate", files=files)
+    assert response.status_code == 200
+    meta = response.json()["metadata"]
+    assert "speech_duration_seconds" in meta
+    assert "speech_ratio" in meta
+    assert "is_speech_detected" in meta
+    assert "clipping_ratio" in meta
+
+
+def test_api_health_includes_features():
+    """Test GET /api/v1/health advertises VAD capability."""
+    response = client.get("/api/v1/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert "features" in data
+    assert data["features"]["vad_speech_activity_detection"] is True
+
+
+
